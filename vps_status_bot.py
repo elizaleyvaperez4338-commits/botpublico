@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("8278705583:AAFOwQffTb-7vsa7g79HLj9sh_iZufZvaKE")
 
 def bytes_to_gb(b: int) -> float:
     return b / (1024 ** 3)
