@@ -24,7 +24,10 @@ import uuid
 import zipfile
 import io
 from bson.json_util import dumps
+import platform
 import psutil
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
 # Configuración de logging
 logging.basicConfig(
@@ -385,6 +388,76 @@ async def backup_command(client, message):
         except:
             await message.reply("❌ **Error al crear el backup**")
             
+# ======================== NUEVOS COMANDOS DE VPS STATUS ======================== #
+
+@app.on_message(filters.command("vpsstatus") & filters.user(admin_users))
+async def vps_status_command(client, message):
+    """Muestra el estado del VPS"""
+    try:
+        status_text = get_status_text()
+        await message.reply(status_text, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en vps_status_command: {e}", exc_info=True)
+        await message.reply(f"⚠️ Error leyendo estado del VPS: {e}")
+
+@app.on_message(filters.command("serverinfo") & filters.user(admin_users))
+async def server_info_command(client, message):
+    """Información detallada del servidor"""
+    try:
+        # Información básica del sistema
+        system_info = platform.system()
+        release = platform.release()
+        version = platform.version()
+        machine = platform.machine()
+        processor = platform.processor()
+        
+        # Información de red
+        network_info = ""
+        try:
+            net_io = psutil.net_io_counters()
+            network_info = f"📤 *Subida:* {sizeof_fmt(net_io.bytes_sent)}\n" \
+                          f"📥 *Descarga:* {sizeof_fmt(net_io.bytes_recv)}\n"
+        except:
+            network_info = "📡 *Info de red:* No disponible\n"
+        
+        # Procesos
+        processes = len(psutil.pids())
+        
+        # Temperatura (si está disponible)
+        temp_info = ""
+        try:
+            temps = psutil.sensors_temperatures()
+            if temps:
+                for name, entries in temps.items():
+                    if entries:
+                        temp_info += f"🌡️ *{name}:* {entries[0].current}°C\n"
+        except:
+            pass
+        
+        # Memoria Swap
+        swap = psutil.swap_memory()
+        swap_total = bytes_to_gb(swap.total)
+        swap_used = bytes_to_gb(swap.used)
+        swap_percent = swap.percent
+        
+        response = (
+            f"📊 *Información del Servidor*\n\n"
+            f"🖥️ *Sistema:* {system_info} {release}\n"
+            f"📁 *Versión:* {version}\n"
+            f"⚙️ *Arquitectura:* {machine}\n"
+            f"💻 *Procesador:* {processor[:50]}...\n\n"
+            f"{get_status_text()}\n"
+            f"🔄 *Swap:* `{swap_used:.2f} / {swap_total:.2f} GB` (`{swap_percent:.1f}%`)\n"
+            f"📊 *Procesos activos:* {processes}\n"
+            f"{network_info}"
+            f"{temp_info}"
+        )
+        
+        await message.reply(response, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error en server_info_command: {e}", exc_info=True)
+        await message.reply(f"⚠️ Error obteniendo información del servidor: {e}")
+            
 # ======================== NUEVO COMANDO SETDAYS ======================== #
 
 async def add_days_to_all_users(days: int, admin_id: int):
@@ -485,25 +558,6 @@ async def setdays_command(client, message):
         logger.error(f"Error en setdays_command: {e}", exc_info=True)
         await message.reply("❌ **Error al procesar el comando**")            
 
-# ======================== NUEVO COMANDO SYSTEM ======================== #
-
-@app.on_message(filters.command("system") & filters.user(admin_users))
-async def system_command(client, message):
-    """Muestra estadísticas del sistema en tiempo real"""
-    try:
-        stats = get_system_stats()
-        
-        # Crear teclado con botón de actualizar
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_system_stats")]
-        ])
-        
-        await message.reply(stats, reply_markup=keyboard)
-        
-    except Exception as e:
-        logger.error(f"Error en system_command: {e}", exc_info=True)
-        await message.reply("❌ **Error al obtener estadísticas del sistema**")
-        
 # ======================== FUNCIÓN PARA FORMATEAR TIEMPO ======================== #
 
 def format_time(seconds):
@@ -1400,63 +1454,6 @@ async def get_plan_info(user_id: int):
         keyboard
     )
 
-# ======================== NUEVA FUNCIÓN PARA ESTADÍSTICAS DEL SISTEMA ======================== #
-
-def get_system_stats():
-    """Obtiene estadísticas del sistema en tiempo real"""
-    try:
-        # Obtener porcentajes
-        cpu_percent = psutil.cpu_percent(interval=0.5)
-        ram = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-        disk = psutil.disk_usage('/')
-        
-        # Función para crear barras de progreso
-        def create_bar(percent, length=10):
-            percent = max(0, min(100, percent))
-            filled = int(length * percent / 100)
-            bar = '█' * filled + '▒' * (length - filled)
-            return f"{bar} {percent:.1f}%"
-        
-        # Crear barras para cada métrica
-        cpu_bar = create_bar(cpu_percent)
-        ram_bar = create_bar(ram.percent)
-        swap_bar = create_bar(swap.percent)
-        disk_bar = create_bar(disk.percent)
-        
-        # Obtener información adicional
-        ram_used = sizeof_fmt(ram.used)
-        ram_total = sizeof_fmt(ram.total)
-        disk_used = sizeof_fmt(disk.used)
-        disk_total = sizeof_fmt(disk.total)
-        
-        stats_text = (
-            "🖥️ **Estadísticas del Sistema en Tiempo Real**\n\n"
-            f"**CPU**  : {cpu_bar}\n"
-            f"**RAM**  : {ram_bar}\n"
-            f"          {ram_used}/{ram_total}\n"
-            f"**SWAP** : {swap_bar}\n"
-            f"**DISK** : {disk_bar}\n"
-            f"          {disk_used}/{disk_total}\n\n"
-        )
-        
-        # Agregar información adicional si está disponible
-        try:
-            # Temperatura de CPU (solo Linux)
-            if hasattr(psutil, "sensors_temperatures"):
-                temps = psutil.sensors_temperatures()
-                if temps and 'coretemp' in temps:
-                    cpu_temp = temps['coretemp'][0].current
-                    stats_text += f"🌡️ **Temperatura CPU**: {cpu_temp}°C\n"
-        except:
-            pass
-        
-        return stats_text
-        
-    except Exception as e:
-        logger.error(f"Error obteniendo estadísticas del sistema: {e}")
-        return "❌ **Error al obtener estadísticas del sistema**"
-        
 # ======================== FUNCIÓN PARA VERIFICAR VÍDEOS EN COLA ======================== #
 
 async def has_pending_in_queue(user_id: int) -> bool:
@@ -2550,24 +2547,6 @@ async def callback_handler(client, callback_query: CallbackQuery):
             logger.error(f"Error cerrando mensaje de plan: {e}")
             await callback_query.answer("❌ Error al cerrar el mensaje")
         return
-
-# Manejar actualización de estadísticas del sistema
-if callback_query.data == "refresh_system_stats":
-    if callback_query.from_user.id not in admin_users:
-        await callback_query.answer("⚠️ Solo los administradores pueden ver estas estadísticas", show_alert=True)
-        return
-    
-    try:
-        stats = get_system_stats()
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Actualizar", callback_data="refresh_system_stats")]
-        ])
-        await callback_query.message.edit_text(stats, reply_markup=keyboard)
-        await callback_query.answer("✅ Estadísticas actualizadas")
-    except Exception as e:
-        logger.error(f"Error actualizando estadísticas del sistema: {e}")
-        await callback_query.answer("❌ Error al actualizar estadísticas", show_alert=True)
-    return
         
     # ======================== MANEJAR CONFIRMACIÓN DE SETDAYS ======================== #
     
@@ -3829,13 +3808,16 @@ async def handle_message(client, message):
         elif text.startswith(('/backup', '.backup')):
             if user_id in admin_users:
                 await backup_command(client, message)
+        elif text.startswith(('/vpsstatus', '.vpsstatus')):
+    if user_id in admin_users:
+        await vps_status_command(client, message)
+         elif text.startswith(('/serverinfo', '.serverinfo')):
+    if user_id in admin_users:
+        await server_info_command(client, message)
         elif text.startswith(('/setdays', '.setdays')):
             if user_id in admin_users:
                 await setdays_command(client, message)
-        elif text.startswith(('/system', '.system')):
-    if user_id in admin_users:
-        await system_command(client, message)
-        
+
         if message.reply_to_message:
             original_message = sent_messages.get(message.reply_to_message.id)
             if original_message:
@@ -3880,6 +3862,61 @@ async def notify_group(client, message: Message, original_size: int, compressed_
         logger.info(f"Notificación enviada al grupo: {user.id} - {file_name} ({status})")
     except Exception as e:
         logger.error(f"Error enviando notificación al grupo: {e}")
+        
+# ======================== FUNCIONES DE ESTADO DEL VPS ======================== #
+
+def bytes_to_gb(b: int) -> float:
+    """Convierte bytes a gigabytes"""
+    return b / (1024 ** 3)
+
+def fmt_uptime(seconds: float) -> str:
+    """Formatea segundos a formato HH:MM:SS"""
+    return str(datetime.timedelta(seconds=int(seconds)))
+
+def get_status_text() -> str:
+    """Genera el texto del estado del VPS"""
+    # CPU
+    cpu_percent = psutil.cpu_percent(interval=1)
+    cpu_count = psutil.cpu_count(logical=True)
+
+    # RAM
+    vm = psutil.virtual_memory()
+    ram_total = bytes_to_gb(vm.total)
+    ram_used = bytes_to_gb(vm.used)
+    ram_percent = vm.percent
+
+    # Disco (root)
+    du = psutil.disk_usage("/")
+    disk_total = bytes_to_gb(du.total)
+    disk_used = bytes_to_gb(du.used)
+    disk_percent = du.percent
+
+    # Uptime
+    boot_ts = psutil.boot_time()
+    uptime = time.time() - boot_ts
+
+    # Load average (Linux)
+    load_str = "N/A"
+    try:
+        la1, la5, la15 = os.getloadavg()
+        load_str = f"{la1:.2f}, {la5:.2f}, {la15:.2f}"
+    except Exception:
+        pass
+
+    hostname = platform.node()
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    text = (
+        f"🖥️ *VPS Status*\n"
+        f"🕒 *Hora:* `{now}`\n"
+        f"🏷️ *Host:* `{hostname}`\n\n"
+        f"⚙️ *CPU:* `{cpu_percent:.1f}%` (cores: `{cpu_count}`)\n"
+        f"📈 *Load (1/5/15):* `{load_str}`\n\n"
+        f"🧠 *RAM:* `{ram_used:.2f} / {ram_total:.2f} GB` (`{ram_percent:.1f}%`)\n"
+        f"💾 *Disco (/):* `{disk_used:.2f} / {disk_total:.2f} GB` (`{disk_percent:.1f}%`)\n\n"
+        f"⏱️ *Uptime:* `{fmt_uptime(uptime)}`\n"
+    )
+    return text
 
 # ======================== INICIO DEL BOT ======================== #
 
